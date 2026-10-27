@@ -6,7 +6,7 @@ import * as F from "./financials.js";
 import { quotes as fetchQuotes } from "./prices.js";
 import { esc, money, pct, qty, monthLabel, dayLabel, ymd, parseYmd, todayEpochDay, monthOfDay, monthYear, lc, eqi, sum, groupBy } from "./util.js";
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.0.1";
 
 // ---------------------------------------------------------------- state
 
@@ -65,7 +65,7 @@ async function refresh() {
     setSnap(await S.wb.load());
     S.loading = false;
     render();
-    if (!Object.keys(S.quotes).length) refreshPrices();
+    refreshPrices(); // always: fund prices come from the workbook, so new sync data shows right away
   } catch (e) {
     S.loading = false;
     if (e instanceof Auth.NotSignedIn) { S.signedIn = false; render(); return; }

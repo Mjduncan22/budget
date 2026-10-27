@@ -183,3 +183,20 @@ main { max-width: 640px; margin: 0 auto; padding-bottom: calc(76px + var(--safe-
   .nav { justify-content: center; gap: 24px; }
   .nav button { flex: none; width: 96px; }
 }
+
+/* budget table */
+.labelrow { display: flex; align-items: flex-end; justify-content: space-between; padding-right: 20px; }
+.labelrow .textbtn { padding: 0 0 8px; }
+.btable { padding: 4px 0; }
+.btrow { display: grid; grid-template-columns: minmax(0, 1fr) 68px 68px 76px; gap: 4px; align-items: center; width: 100%; padding: 9px 16px 9px 20px; font-size: 14px; }
+.btrow .num { text-align: right; white-space: nowrap; }
+.btrow.tap:active { background: var(--chip); }
+.btrow .btbar { grid-column: 1 / -1; margin-top: -4px; }
+.btrow .btbar .bar { margin: 0; height: 4px; }
+.btcols { font-size: 11px; letter-spacing: .6px; font-weight: 600; text-transform: uppercase; color: var(--muted); padding-top: 6px; padding-bottom: 4px; }
+.bthead { font-weight: 600; background: var(--chip); margin-top: 6px; }
+.bthead .num { font-weight: 600; }
+.bttotal { font-weight: 700; border-top: 1px solid var(--line); margin-top: 6px; }
+.budin { width: 72px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); text-align: right; font-size: 16px; }
+.textbtn.sm { font-size: 14px; }
+@media (max-width: 360px) { .btrow { grid-template-columns: minmax(0, 1fr) 60px 60px 70px; padding-left: 14px; padding-right: 10px; font-size: 13px; } }

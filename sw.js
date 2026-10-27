@@ -1,6 +1,6 @@
 // Keeps the app shell available offline and picks up new versions automatically.
 // Bump VERSION whenever any file changes so phones fetch the new files.
-const VERSION = "budget-1.0.0";
+const VERSION = "budget-1.1.0";
 const SHELL = [
   "./", "index.html", "styles.css", "manifest.webmanifest",
   "js/app.js", "js/auth.js", "js/data.js", "js/analytics.js", "js/financials.js", "js/prices.js", "js/util.js",
