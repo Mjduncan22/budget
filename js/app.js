@@ -4,9 +4,9 @@ import { Workbook, newTxId } from "./data.js";
 import * as A from "./analytics.js";
 import * as F from "./financials.js";
 import { quotes as fetchQuotes } from "./prices.js";
-import { esc, money, pct, qty, monthLabel, dayLabel, ymd, parseYmd, todayEpochDay, monthOfDay, monthYear, lc, eqi, sum, groupBy } from "./util.js";
+import { esc, money, pct, qty, monthLabel, dayLabel, ymd, parseYmd, todayEpochDay, monthOfDay, monthYear, addMonths, lc, eqi, sum, groupBy } from "./util.js";
 
-export const VERSION = "1.0.1";
+export const VERSION = "1.1.0";
 
 // ---------------------------------------------------------------- state
 
@@ -129,6 +129,18 @@ async function setBudget(cat, amount) {
   });
 }
 
+async function saveBudgets(changes) {
+  await write("Budgets saved", async () => {
+    let cats = S.snap.categories;
+    for (const [cat, amount] of changes) {
+      if (!S.offline) await S.wb.setBudget(cat, amount);
+      cats = cats.map((c) => (c.name === cat.name ? { ...c, budget: amount } : c));
+    }
+    setSnap({ ...S.snap, categories: cats }, { keepMonth: true });
+    return changes.length ? `Saved ${changes.length} budget${changes.length === 1 ? "" : "s"}` : "No changes";
+  });
+}
+
 async function addTransaction(tx) {
   await write("Transaction added", async () => {
     if (!S.offline) await S.wb.addTransaction(tx);
@@ -239,41 +251,77 @@ function pageOverview() {
   if (r.changes.length) mr += `<div class="cap">Biggest changes</div>` + r.changes.map(([c, now, before]) => `<div class="kv"><span>${esc(c)}</span><span class="${now > before ? "neg" : "pos"} sm">${money(before, true)} → ${money(now, true)}</span></div>`).join("");
   if (r.largest.length) mr += `<div class="cap">Largest purchases</div>` + r.largest.map((t) => `<div class="kv"><span class="ell">${esc(t.description)}</span><span class="sm">${money(-t.amount)}</span></div>`).join("");
   if (r.reviewCount > 0) mr += `<button class="textbtn" data-go="bankrec">${r.reviewCount} uncategorized this month — open Bank Rec</button>`;
+  h += budgetTable();
   h += label("Month in review") + card(`<div class="pad">${mr}</div>`);
-  h += label("Spending by group");
-  for (const g of sum0.spendingGroups.filter((g) => g.spent !== 0 || g.budget != null)) {
-    const open = UI.open.has(g.name);
-    let gi = `<button class="grouphead" data-act="toggle" data-k="${esc(g.name)}"><div class="kv"><b>${esc(g.name)}</b><span><b>${money(g.spent)}</b>${icon(I.down, open ? "flip sm" : "sm")}</span></div>`;
-    gi += g.budget > 0 ? bar(g.spent / g.budget) + `<div class="t2">of ${money(g.budget, true)} budget</div>` : bar(sum0.spending > 0 ? g.spent / sum0.spending : 0, true);
-    gi += `</button>`;
-    if (open) gi += g.categories.map((c) => `<button class="row sub" data-go="cat/${esc(c.category.name)}"><div class="grow"><div class="kv"><span>${esc(c.category.name)}</span><span class="sm">${c.category.budget != null ? `${money(c.spent, true)} / ${money(c.category.budget, true)}` : money(c.spent)}</span></div>${c.category.budget > 0 ? bar(c.spent / c.category.budget) : ""}</div></button>`).join("");
-    h += card(gi, "tight");
-  }
   h += label("Income");
   const inc = sum0.incomeCategories.filter((c) => c.spent !== 0);
   h += card(inc.length ? inc.map((c) => amountRow(c.category.name, money(c.spent), `data-go="cat/${esc(c.category.name)}"`)).join('<hr>') : `<div class="pad t2">No income recorded this month</div>`);
   return h;
 }
 
+/** Every spending category with this month, last month and its monthly budget. Tap a row for that month's transactions. */
+function budgetTable() {
+  const s = S.snap, prev = addMonths(S.month, -1);
+  const spentIn = (month) => {
+    const m = new Map();
+    for (const t of s.transactions) if (t.budgetMonth === month) m.set(lc(t.category), (m.get(lc(t.category)) || 0) + t.amount);
+    return (c) => 0 - (m.get(lc(c.name)) || 0);
+  };
+  const now = spentIn(S.month), before = spentIn(prev);
+  const cats = s.categories.filter((c) => c.type === A.T.EXPENSE || c.type === A.T.INVESTMENT);
+  const editing = UI.editBudgets;
+  const bud = (c) => (c.budget == null ? "" : String(Math.round(c.budget * 100) / 100));
+  const cell = (v, cls = "") => `<span class="num ${cls}">${v === 0 ? "—" : money(v, true)}</span>`;
+  let rows = "", tNow = 0, tPrev = 0, tBud = 0;
+  for (const [g, list] of groupBy(cats, (c) => c.group)) {
+    const gNow = sum(list, now), gPrev = sum(list, before), gBud = sum(list, (c) => c.budget || 0);
+    tNow += gNow; tPrev += gPrev; tBud += gBud;
+    rows += `<div class="btrow bthead"><span class="name">${esc(g)}</span>${cell(gNow, gBud > 0 && gNow > gBud ? "neg" : "")}${cell(gPrev)}<span class="num">${gBud ? money(gBud, true) : "—"}</span></div>`;
+    for (const c of list) {
+      const n = now(c), b = c.budget;
+      const over = b > 0 && n > b, near = b > 0 && !over && n > b * 0.85;
+      const budgetCell = editing
+        ? `<span class="num"><input class="budin" inputmode="decimal" data-budget="${esc(c.name)}" value="${esc(bud(c))}" placeholder="—" aria-label="${esc(c.name)} monthly budget"></span>`
+        : `<span class="num dim">${b ? money(b, true) : "—"}</span>`;
+      const prog = !editing && b > 0 ? `<div class="btbar">${bar(n / b)}</div>` : "";
+      rows += editing
+        ? `<div class="btrow"><span class="name ell">${esc(c.name)}</span>${cell(n)}${cell(before(c))}${budgetCell}</div>`
+        : `<button class="btrow tap" data-go="cat/${esc(c.name)}"><span class="name ell">${esc(c.name)}</span>${cell(n, over ? "neg" : near ? "warn" : "")}${cell(before(c))}${budgetCell}${prog}</button>`;
+    }
+  }
+  const head = `<div class="btrow btcols"><span class="name"></span><span class="num">${monthLabel(S.month, true)}</span><span class="num">${monthLabel(prev, true)}</span><span class="num">Budget</span></div>`;
+  const total = `<div class="btrow bttotal"><span class="name">Total</span>${cell(tNow, tBud > 0 && tNow > tBud ? "neg" : "")}${cell(tPrev)}<span class="num">${tBud ? money(tBud, true) : "—"}</span></div>`;
+  const actions = editing
+    ? `<div class="actions padx"><button class="outline" data-act="budgets-cancel">Cancel</button><button class="primary grow" data-act="budgets-save">Save budgets</button></div><p class="foot">Monthly amount for each category, used every month. Leave a box empty for no budget. Saved to the Categories tab in Excel.</p>`
+    : `<p class="foot">Tap a category to see its ${monthLabel(S.month)} transactions.</p>`;
+  return `<div class="labelrow">${label("Budget")}<button class="textbtn sm" data-act="${editing ? "budgets-cancel" : "budgets-edit"}">${editing ? "Done" : "Edit budgets"}</button></div>`
+    + card(head + rows + total, "btable") + actions;
+}
+
 function pageCategory(name) {
   const s = S.snap, cat = A.category(s, name);
   if (!cat) return `<div class="pad">Category "${esc(name)}" isn't in your Categories table.</div>`;
   const trend = A.categoryTrend(s, cat, S.month);
-  const spent = trend[trend.length - 1]?.[1] || 0;
+  const spent = trend[trend.length - 1]?.[1] || 0, last = trend[trend.length - 2]?.[1] || 0;
   const txs = s.transactions.filter((t) => t.budgetMonth === S.month && eqi(t.category, cat.name)).sort((a, b) => b.date - a.date);
   const isIncome = cat.type === A.T.INCOME;
-  let h = `<div class="hero"><div class="cap">${esc(cat.group)} · ${monthLabel(S.month)}</div><div class="big">${money(spent)}</div>`;
+  let h = monthSwitcher();
+  h += `<div class="hero"><div class="cap">${esc(cat.group)} · ${monthLabel(S.month)}</div><div class="big">${money(spent)}</div>`;
   if (cat.budget != null && !isIncome) {
     h += bar(spent / cat.budget) + `<div class="t2 ${spent > cat.budget ? "neg" : ""}">${spent <= cat.budget ? `${money(cat.budget - spent)} left of ${money(cat.budget, true)}` : `${money(spent - cat.budget)} over ${money(cat.budget, true)}`}</div>`;
   }
+  h += `<div class="tiles"><div class="tile"><div class="cap">${monthLabel(S.month, true)}</div><div class="v">${money(spent, true)}</div></div>
+    <div class="tile"><div class="cap">${monthLabel(addMonths(S.month, -1), true)}</div><div class="v">${money(last, true)}</div></div>
+    <div class="tile"><div class="cap">Budget</div><div class="v">${cat.budget != null ? money(cat.budget, true) : "—"}</div></div></div>`;
   if (!isIncome && cat.type !== A.T.TRANSFER) h += `<button class="outline" data-act="budget" data-c="${esc(cat.name)}">${cat.budget == null ? "Set monthly budget" : "Change budget"}</button>`;
-  h += `</div>` + label("Last 6 months");
+  h += `</div>`;
+  h += label(`${txs.length} transaction${txs.length === 1 ? "" : "s"} in ${monthLabel(S.month)}`);
+  h += card(txs.map((t) => txRow(t, false)).join("<hr>") || `<div class="pad t2">No ${esc(cat.name)} transactions in ${monthLabel(S.month)}.</div>`);
+  h += label("Last 6 months");
   const max = Math.max(1, cat.budget || 0, ...trend.map((x) => x[1]));
   const bars = trend.map(([m, v], i) => `<div class="tb"><span class="cap">${v > 0 ? money(v, true) : ""}</span><div class="tbwrap"><div class="tbfill ${i === trend.length - 1 ? "now" : ""}" style="height:${Math.max(2, (Math.max(0, v) / max) * 100)}%"></div></div><span class="cap">${monthLabel(m, true)}</span></div>`).join("");
   const avg = sum(trend, (x) => x[1]) / trend.length;
   h += card(`<div class="trend">${bars}</div><div class="pad t2">Average ${money(avg)} / month${cat.budget != null ? ` · budget ${money(cat.budget, true)}` : ""}</div>`);
-  h += label(`${txs.length} transaction${txs.length === 1 ? "" : "s"} in ${monthLabel(S.month, true)}`);
-  h += card(txs.map((t) => txRow(t, false)).join("<hr>") || `<div class="pad t2">None</div>`);
   return h;
 }
 
@@ -616,6 +664,21 @@ document.addEventListener("click", async (e) => {
     }
     case "closesheet": closeSheet(); break;
     case "budget": budgetDialog(A.category(S.snap, d.c)); break;
+    case "budgets-edit": UI.editBudgets = true; render.keepScroll = true; render(); break;
+    case "budgets-cancel": UI.editBudgets = false; render.keepScroll = true; render(); break;
+    case "budgets-save": {
+      const changes = [];
+      for (const inp of document.querySelectorAll("[data-budget]")) {
+        const cat = A.category(S.snap, inp.dataset.budget);
+        const raw = inp.value.replace(/[$,\s]/g, "");
+        const n = raw === "" ? null : parseFloat(raw);
+        if (raw !== "" && !(n >= 0)) { inp.focus(); say(`"${inp.value}" isn't an amount for ${cat.name}`); return; }
+        const amount = n && n > 0 ? Math.round(n * 100) / 100 : null;
+        if ((cat.budget ?? null) !== amount) changes.push([cat, amount]);
+      }
+      UI.editBudgets = false; render.keepScroll = true;
+      await saveBudgets(changes); break;
+    }
     case "savebudget": {
       const v = $("#budgetIn").value.replace(/[$,]/g, "").trim();
       const n = v === "" ? null : parseFloat(v);
